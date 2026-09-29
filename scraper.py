@@ -13,7 +13,8 @@ from googleapiclient.discovery import build
 
 # ===== Configuración =====
 MAIN_URL = "https://cge.entrerios.gov.ar/departamental-uruguay/"
-KEYWORDS = ["artes visuales", "lenguaje y producción visual", "plástica", "preceptor", "preceptora"]
+FEED_URL = "http://cge.entrerios.gov.ar/category/uruguay-concursos/feed/"
+KEYWORDS = ["artes visuales", "artes visuals", "artesvisuales", "lenguaje y producción visual", "lenguaje y produccion visual", "plástica", "plastica", "visuales", "preceptor", "preceptora", "preceptores", "preceptoría", "preceptoria"]
 SEEN_FILE = "seen_urls.txt"
 
 GMAIL_TOKEN_JSON = os.environ.get("GMAIL_TOKEN")
