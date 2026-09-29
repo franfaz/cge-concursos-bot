@@ -25,6 +25,7 @@ jobs:
         env:
           GMAIL_TOKEN: ${{ secrets.GMAIL_TOKEN }}
           GMAIL_RECIPIENT: ${{ secrets.GMAIL_RECIPIENT }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: python scraper.py
 
       - name: Commit seen_urls
