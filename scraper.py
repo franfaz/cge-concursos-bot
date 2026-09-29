@@ -1,5 +1,6 @@
 import os
 import json
+from openai import OpenAI
 import base64
 import time
 import requests
@@ -36,7 +37,104 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 }
 
+# Inicializar el cliente de DeepSeek (usando el formato compatible de OpenAI)
+client = OpenAI(
+    api_key=os.environ.get("DEEPSEEK_API_KEY"),
+    base_url="https://api.deepseek.com"
+)
 
+def extraer_con_ia(texto_aviso, url):
+    """
+    Usar DeepSeek para extraer información estructurada del texto de la convocatoria
+    """
+    system_prompt = """
+    Eres un asistente especializado en extraer información de convocatorias docentes.
+    El usuario te proporcionará el texto de una convocatoria, debes devolver ÚNICAMENTE un objeto JSON válido, sin ningún texto explicativo ni bloques de código Markdown.
+
+    El formato JSON es el siguiente:
+    {
+      "escuela": "string o null",
+      "cargo": "string o null",
+      "horas": "string o null",
+      "caracter": "string o null",
+      "fecha_concurso": "string o null",
+      "hora_concurso": "string o null",
+      "lugar": "string o null",
+      "dias_horario": "string o null"
+    }
+
+    Si un dato no está en el texto, usa null. No inventes información.
+    """
+
+    try:
+        response = client.chat.completions.create(
+            model="deepseek-flash",  # Usar el modelo económico Flash
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": texto_aviso}
+            ],
+            response_format={"type": "json_object"},  # Habilitar salida JSON
+            max_tokens=500,
+            temperature=0,  # Extracción determinista, usar 0
+            extra_body={"thinking": {"type": "disabled"}}  # Modo de extracción, desactivar razonamiento
+        )
+        
+        # Verificar si la respuesta está vacía
+        content = response.choices[0].message.content
+        if not content or not content.strip():
+            print("  ⚠️ La IA devolvió contenido vacío")
+            return None
+            
+        datos = json.loads(content)
+        datos["url"] = url
+        return datos
+
+    except Exception as e:
+        print(f"  ⚠️ Falló la extracción con IA: {e}")
+        return None  # Devolver None en caso de fallo, no interrumpir el flujo principal
+
+
+def check_article_content(url):
+    """Entrar en el enlace y usar IA para extraer datos"""
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=20)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "lxml")
+        
+        for tag in soup(["script", "style", "nav", "footer", "header"]):
+            tag.decompose()
+        
+        text = soup.get_text(separator=" ").strip()
+        text_lower = text.lower()
+        
+        # Primero usar palabras clave para filtrar rápidamente
+        matched = [kw for kw in KEYWORDS if kw in text_lower]
+        if not matched:
+            return None
+        
+        print(f"    ✅ Coincidencia de palabras clave: {', '.join(matched)}")
+        
+        # Extraer datos con IA
+        datos = extraer_con_ia(text, url)
+        if datos:
+            datos["matched"] = matched
+            # Mantener el título original
+            title_tag = soup.select_one("h1.entry-title, h1")
+            datos["title"] = title_tag.get_text(strip=True) if title_tag else "Sin título"
+            return datos
+        else:
+            # Si la IA falla, devolver un objeto mínimo para no perder esta convocatoria
+            return {
+                "url": url,
+                "matched": matched,
+                "title": "Error en extracción con IA",
+                "raw_text": text[:500]  # Guardar los primeros 500 caracteres del texto original
+            }
+
+    except Exception as e:
+        print(f"  ⚠️ Error al leer {url}: {e}")
+        return None
+        
 def load_seen():
     if os.path.exists(SEEN_FILE):
         with open(SEEN_FILE, "r") as f:
@@ -158,19 +256,41 @@ def main():
 
     save_seen(seen)
 
-    if new_matches:
-        subject = f"CGE Uruguay — {len(new_matches)} concursos relevantes"
-        body_lines = [f"Se encontraron {len(new_matches)} publicaciones nuevas que coinciden:\n"]
+        if new_matches:
+        subject = f"CGE Uruguay — {len(new_matches)} convocatorias relevantes"
+        body_lines = [f"Se encontraron {len(new_matches)} convocatorias relevantes:\n"]
+        
         for i, m in enumerate(new_matches, 1):
-            kw_str = ", ".join(m["matched"])
-            body_lines.append(f"{i}. {m['title']}")
-            body_lines.append(f"   Fecha: {m['pub_date']}")
-            body_lines.append(f"   Palabras clave: {kw_str}")
-            body_lines.append(f"   Link: {m['link']}\n")
-
+            body_lines.append(f"━━━ {i}. {m.get('title', 'Sin título')} ━━━")
+            
+            # Mostrar campos extraídos por IA
+            if m.get("escuela"):
+                body_lines.append(f"🏫 Escuela: {m['escuela']}")
+            if m.get("cargo"):
+                body_lines.append(f"📚 Cargo: {m['cargo']}")
+            if m.get("horas"):
+                body_lines.append(f"⏱️ Horas: {m['horas']}")
+            if m.get("caracter"):
+                body_lines.append(f"👤 Carácter: {m['caracter']}")
+            if m.get("fecha_concurso"):
+                body_lines.append(f"📅 Fecha: {m['fecha_concurso']}")
+            if m.get("hora_concurso"):
+                body_lines.append(f"🕐 Hora: {m['hora_concurso']}")
+            if m.get("dias_horario"):
+                body_lines.append(f"🗓️ Días y horario: {m['dias_horario']}")
+            if m.get("lugar"):
+                body_lines.append(f"📍 Lugar: {m['lugar']}")
+            
+            body_lines.append(f"🔗 Enlace: {m['url']}")
+            body_lines.append(f"🔑 Palabras clave: {', '.join(m.get('matched', []))}\n")
+            
+            # Si hay error en extracción con IA, mostrar texto original
+            if m.get("raw_text"):
+                body_lines.append(f"📄 Texto original (parcial): {m['raw_text'][:200]}...\n")
+        
         body = "\n".join(body_lines)
         send_email(subject, body)
-        print(f"\n📧 Notificación enviada con {len(new_matches)} coincidencias.")
+        print(f"\n📧 Notificación enviada, {len(new_matches)} coincidencias en total.")
     else:
         print("\nSin coincidencias nuevas en el feed.")
 
