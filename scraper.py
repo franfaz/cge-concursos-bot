@@ -98,27 +98,35 @@ def send_email(subject, body):
 
 # ===== Feed =====
 def get_feed_items():
-    try:
-        r = requests.get(FEED_URL, headers=HEADERS, timeout=20)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "xml")
-        items = soup.find_all("item")
+    """Lee el RSS con reintentos por si el servidor está lento"""
+    max_intentos = 3
+    for intento in range(1, max_intentos + 1):
+        try:
+            r = requests.get(FEED_URL, headers=HEADERS, timeout=90)
+            r.raise_for_status()
+            soup = BeautifulSoup(r.text, "xml")
+            items = soup.find_all("item")
 
-        result = []
-        for item in items:
-            title = item.title.text.strip() if item.title else "Sin título"
-            link = item.link.text.strip() if item.link else ""
-            pub_date = item.pubDate.text.strip() if item.pubDate else ""
-            if link:
-                result.append({
-                    "title": title,
-                    "link": link,
-                    "pub_date": pub_date
-                })
-        return result
-    except Exception as e:
-        print(f"Error al leer el feed: {e}")
-        return []
+            result = []
+            for item in items:
+                title = item.title.text.strip() if item.title else "Sin título"
+                link = item.link.text.strip() if item.link else ""
+                pub_date = item.pubDate.text.strip() if item.pubDate else ""
+                if link:
+                    result.append({
+                        "title": title,
+                        "link": link,
+                        "pub_date": pub_date
+                    })
+            return result
+
+        except Exception as e:
+            print(f"  ⚠️ Intento {intento}/{max_intentos} falló: {e}")
+            if intento < max_intentos:
+                time.sleep(60)  # esperar 60 segundos antes de reintentar
+
+    print(f"  ❌ No se pudo leer el feed tras {max_intentos} intentos")
+    return []
 
 
 # ===== Extracción con IA =====
