@@ -12,7 +12,6 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
 # ===== Configuración =====
-MAIN_URL = "https://cge.entrerios.gov.ar/departamental-uruguay/"
 FEED_URL = "http://cge.entrerios.gov.ar/category/uruguay-concursos/feed/"
 KEYWORDS = ["artes visuales", "artes visuals", "artesvisuales", "lenguaje y producción visual", "lenguaje y produccion visual", "plástica", "plastica", "visuales", "preceptor", "preceptora", "preceptores", "preceptoría", "preceptoria"]
 SEEN_FILE = "seen_urls.txt"
@@ -58,72 +57,60 @@ def send_email(subject, body):
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
     service.users().messages().send(userId='me', body={'raw': raw}).execute()
     print(f"Email enviado a {GMAIL_RECIPIENT}")
-
-def check_page():
-    """Lee la página principal y busca coincidencias"""
+    
+def check_feed():
+    """Lee el RSS y busca coincidencias en cada publicación individual"""
     try:
-        r = requests.get(MAIN_URL, headers=HEADERS, timeout=20)
+        r = requests.get(FEED_URL, headers=HEADERS, timeout=20)
         r.raise_for_status()
-        soup = BeautifulSoup(r.text, "lxml")
-        
-        # Obtener todo el texto visible de la página
-        text = soup.get_text(separator=" ").lower()
-        
-        matched = [kw for kw in KEYWORDS if kw in text]
-        if not matched:
-            print("No se encontraron palabras clave en la página principal.")
-            return None
+        soup = BeautifulSoup(r.text, "xml")  # ← parser XML
+        items = soup.find_all("item")
 
-        # Si hay coincidencias, extraer el título y la fecha
-        title_tag = soup.select_one("h1, h2, .entry-title")
-        title = title_tag.get_text(strip=True) if title_tag else "Página Departamental Uruguay"
-        
-        date = datetime.now().strftime("%d/%m/%Y")
-        
-        return {
-            "url": MAIN_URL,
-            "title": title,
-            "date": date,
-            "matched": matched
-        }
+        seen = load_seen()
+        new_matches = []
+
+        for item in items:
+            title = item.title.text if item.title else "Sin título"
+            link = item.link.text if item.link else ""
+            desc = item.description.text if item.description else ""
+
+            text = (title + " " + desc).lower()
+            matched = [kw for kw in KEYWORDS if kw in text]
+
+            if matched and link not in seen:
+                new_matches.append({
+                    "title": title,
+                    "link": link,
+                    "matched": matched
+                })
+                seen.add(link)
+                print(f"  ✅ Nuevo: {title}")
+
+        save_seen(seen)
+        return new_matches
+
     except Exception as e:
-        print(f"Error al leer la página: {e}")
-        return None
+        print(f"Error al leer el feed: {e}")
+        return []    
 
 def main():
-    seen = load_seen()
-    new_matches = []
-
-    print(f"Revisando: {MAIN_URL}")
-    result = check_page()
-    
-    # Usamos la URL como identificador único
-    if result and MAIN_URL not in seen:
-        new_matches.append(result)
-        seen.add(MAIN_URL)
-        print(f"  ✅ Coincidencias encontradas: {result['matched']}")
-    elif result:
-        print("  - La página ya fue revisada anteriormente o no hay cambios.")
-    else:
-        print("  - Sin coincidencias nuevas.")
-
-    save_seen(seen)
+    print(f"Revisando RSS: {FEED_URL}")
+    new_matches = check_feed()
 
     if new_matches:
-        subject = f"CGE Uruguay — Nuevas publicaciones relevantes"
-        body_lines = [f"Se encontraron coincidencias en la página de la Departamental Uruguay:\n"]
-        for m in new_matches:
+        subject = f"CGE Uruguay — {len(new_matches)} nuevas publicaciones relevantes"
+        body_lines = [f"Se encontraron {len(new_matches)} publicaciones nuevas:\n"]
+        for i, m in enumerate(new_matches, 1):
             kw_str = ", ".join(m["matched"])
-            body_lines.append(f"Título: {m['title']}")
-            body_lines.append(f"Fecha de revisión: {m['date']}")
-            body_lines.append(f"Palabras clave: {kw_str}")
-            body_lines.append(f"Link: {m['url']}\n")
-        
+            body_lines.append(f"{i}. {m['title']}")
+            body_lines.append(f"   Palabras clave: {kw_str}")
+            body_lines.append(f"   Link: {m['link']}\n")
+
         body = "\n".join(body_lines)
         send_email(subject, body)
-        print(f"Notificación enviada.")
+        print(f"Notificación enviada con {len(new_matches)} coincidencias.")
     else:
-        print("Sin novedades para notificar.")
+        print("Sin coincidencias nuevas en el feed.")
 
 if __name__ == "__main__":
     main()
