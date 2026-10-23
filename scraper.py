@@ -163,7 +163,7 @@ def es_fecha_reciente_uader(texto_fecha):
 def get_uader_items():
     """Lee la página de UADER, filtra por fecha y separa por materia/horario"""
     try:
-        r = requests.get(UADER_URL, headers=HEADERS, timeout=60)
+        r = requests.get(UADER_URL, headers=HEADERS, timeout=120)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "lxml")
         for tag in soup(["script", "style", "nav", "footer", "header"]):
